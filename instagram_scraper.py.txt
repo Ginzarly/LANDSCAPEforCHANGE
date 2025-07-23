@@ -1,0 +1,231 @@
+###### Extract data by location
+
+import requests
+import os
+import csv
+import time
+
+# API key and endpoint
+api_key = " "
+url = " "
+query_params = {"location_id": ""}  # Replace with your desired location ID
+headers = {
+    "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com",
+    "x-rapidapi-key": api_key
+}
+
+# Save directory and CSV file path
+save_dir = r"C:\Users"
+os.makedirs(save_dir, exist_ok=True)
+csv_path = os.path.join(save_dir, "data.csv")
+
+# Open the CSV file for writing
+with open(csv_path, mode="w", newline="", encoding="utf-8") as csv_file:
+    csv_writer = csv.writer(csv_file)
+    # Write the CSV header
+    csv_writer.writerow(["Image URL", "Date", "Location Name", "Latitude", "Longitude", "Username", "File Path"])
+
+    # Pagination variables
+    total_posts = 0
+    next_page_token = None
+
+    while True:
+        if next_page_token:
+            query_params["pagination_token"] = next_page_token
+
+        # Make API request
+        response = requests.get(url, headers=headers, params=query_params)
+        if response.status_code == 200:
+            data = response.json()
+            posts = data.get("data", {}).get("items", [])
+            next_page_token = data.get("pagination_token", None)  # Fetch the next token
+
+            print(f"Found {len(posts)} posts on this page.")
+            print(f"Next Pagination Token: {next_page_token}")
+
+            # Exit if no posts or no further pages
+            if not posts:
+                print("No more posts found.")
+                break
+
+            for post in posts:
+                if post.get("is_video"):  # Skip video posts
+                    print(f"Skipping video post: {post.get('id')}")
+                    continue
+
+                # Extract fields
+                username = post.get("user", {}).get("username", "Unknown")
+                date = post.get("taken_at", "Unknown")
+                location = post.get("location", {})
+                location_name = location.get("name", "No Location")
+                latitude = location.get("lat", "No Latitude")
+                longitude = location.get("lng", "No Longitude")
+                image_url = post.get("image_versions2", {}).get("candidates", [{}])[0].get("url", "No URL")
+
+                # Extract one image URL
+                image_url = None
+                if "image_versions" in post:
+                    image_url = post["image_versions"].get("items", [{}])[0].get("url")
+
+                if not image_url:
+                    print(f"No valid photo found for post: {post.get('id')}")
+                    continue
+
+                # Download and save the image
+                try:
+                    image_response = requests.get(image_url)
+                    if image_response.status_code == 200:
+                        file_path = os.path.join(save_dir, f"{username}_{total_posts + 1}.jpg")
+                        with open(file_path, "wb") as file:
+                            file.write(image_response.content)
+                        print(f"Media saved: {file_path}")
+                    else:
+                        print(f"Failed to download image from: {image_url}")
+                        continue
+                except Exception as e:
+                    print(f"Error saving media: {e}")
+                    continue
+
+                # Write data to the CSV file
+                csv_writer.writerow([image_url, date, location_name, latitude, longitude, username, file_path])
+                total_posts += 1
+
+            # Break if no more pages
+            if not next_page_token:
+                print("No more pages to fetch.")
+                break
+        else:
+            print(f"API Error {response.status_code}: {response.text}")
+            break
+
+        time.sleep(1)  # Respect rate limits
+
+print(f"Total posts retrieved: {total_posts}")
+print(f"Data saved to {csv_path}")
+
+###### Extract data by hashtag
+import requests
+from apify_client import ApifyClient
+import os
+import csv
+
+# Initialize the ApifyClient with your actual API token
+client = ApifyClient(" ")
+
+# Prepare the input for the Instagram Hashtag Scraper
+run_input = {
+    "hashtags": ["belgiumflood2021"],  # Replace with your desired hashtag
+    "resultsType": "posts",  # Fetch posts
+}
+
+# Run the Instagram Hashtag Scraper Actor
+run = client.actor("apify/instagram-hashtag-scraper").call(run_input=run_input)
+
+# Set the folder to save images on Desktop
+save_folder = r'C:\Users'
+os.makedirs(save_folder, exist_ok=True)
+
+# Function to download an image from the provided URL
+def download_image(url, filename):
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(filename, 'wb') as file:
+            file.write(response.content)
+        print(f"Downloaded: {filename}")
+    else:
+        print(f"Failed to retrieve image from {url}")
+
+# Function to save results to CSV
+def save_to_csv(results, csv_file):
+    with open(csv_file, mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.DictWriter(file, fieldnames=results[0].keys())
+        writer.writeheader()
+        writer.writerows(results)
+        print(f"Results saved to {csv_file}")
+
+# Set of seen post URLs to avoid duplicates
+seen_posts = set()
+# Set of seen image URLs to avoid downloading duplicates
+seen_images = set()
+
+# Initialize image counter
+image_counter = 1
+
+# Process the results and download images, and collect post data
+results = []
+for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+    post_url = item.get('url')
+    
+    # Skip if post URL has already been seen (duplicate check for posts)
+    if post_url in seen_posts:
+        print(f"Skipping duplicate post: {post_url}")
+        continue
+    seen_posts.add(post_url)
+
+    caption = item.get('caption', '')
+    hashtags = item.get('hashtags', [])
+    likes_count = item.get('likesCount', 0)
+    comments_count = item.get('commentsCount', 0)
+    timestamp = item.get('timestamp', '')
+    owner_full_name = item.get('ownerFullName', '')
+    owner_username = item.get('ownerUsername', '')
+    
+    # Download the image if available
+    image_url = item.get('displayUrl')  # Correctly use 'displayUrl' for image URL
+    if image_url and image_url not in seen_images:  # Avoid downloading duplicate images
+        image_filename = os.path.join(save_folder, f"{image_counter}.jpg")  # Save image with sequential number
+        download_image(image_url, image_filename)
+        seen_images.add(image_url)
+        
+        # Scrape comments using Instagram Comment Scraper
+        comment_run_input = {
+            "directUrls": [post_url],  # Provide the post URL here
+            "resultsLimit": 50  # Limit to 50 comments per post
+        }
+        
+        comment_run = client.actor("apify/instagram-comment-scraper").call(run_input=comment_run_input)
+
+        all_comments = []
+        # Iterate through the comments dataset
+        for comment_item in client.dataset(comment_run["defaultDatasetId"]).iterate_items():
+            comment_text = comment_item.get("text", "")
+            # Fix any encoding issues
+            comment_text = comment_text.encode('utf-8', 'replace').decode('utf-8')
+            all_comments.append(comment_text)
+
+        # Log the number of comments fetched for debugging
+        print(f"Comments fetched for post {post_url}: {len(all_comments)}")
+
+        if not all_comments:
+            all_comments = "No comments available"
+        else:
+            # Convert list of comments to a single string with each comment separated by a comma
+            all_comments = ', '.join(all_comments)
+        
+        # Collecting post details for CSV with image number
+        post_details = {
+            'Text': caption,
+            'Author': owner_full_name,
+            'Author Username': owner_username,
+            'Post URL': post_url,
+            'Number of Comments': comments_count,
+            'Number of Likes': likes_count,
+            'Posted on': timestamp,
+            'Hashtags': hashtags,
+            'Image Number': image_counter,  # Add image number as reference
+            'Image URL': image_url,
+            'All Comments': all_comments  # Add all comments as a string
+        }
+        results.append(post_details)
+        
+        # Increment image counter for next image
+        image_counter += 1
+    else:
+        if image_url:
+            print(f"Skipping duplicate image: {image_url}")
+
+# Save results to CSV
+csv_file = os.path.join(save_folder, 'scraped_results.csv')
+save_to_csv(results, csv_file)
+
+
