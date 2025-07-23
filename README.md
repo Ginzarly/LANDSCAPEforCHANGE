@@ -2,7 +2,7 @@
 Code for Instagram data extraction by hashtag
 ## Features
 
-- Scrapes Instagram posts for a specific hashtag (e.g. `#Belgiumflood`)
+- Scrapes Instagram posts for a specific location (e.g. Verviers) or hashtag (e.g. `#Belgiumflood`) 
 - Downloads images from the posts
 - Extracts captions, likes, comments, hashtags, user info, and timestamps
 - Saves all data into structured CSV and JSON formats
